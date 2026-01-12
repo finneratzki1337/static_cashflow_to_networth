@@ -19,7 +19,7 @@ body {
   background: var(--bg);
   color: var(--text);
   min-height: 100vh;
-  padding: 24px;
+  padding: 18px;
 }
 
 .app {
@@ -51,11 +51,11 @@ body {
 
 .panel {
   border: 2px solid var(--accent);
-  padding: 16px;
+  padding: 14px;
   background: var(--panel);
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
   min-height: 480px;
 }
 
@@ -75,15 +75,21 @@ body {
   opacity: 0.85;
 }
 
+.panel__subheader p {
+  font-size: 14px;
+}
+
 .inputs {
   display: grid;
-  gap: 10px;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 14px;
 }
 
 .field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: 170px 1fr;
+  align-items: center;
+  gap: 8px;
 }
 
 .field span {
@@ -93,11 +99,11 @@ body {
 
 .field input,
 .field select {
-  padding: 6px 10px;
+  padding: 4px 8px;
   border: 2px solid var(--accent-muted);
   background: transparent;
   color: var(--text);
-  font-size: 18px;
+  font-size: 16px;
 }
 
 .field--inline {
@@ -124,11 +130,11 @@ body {
   border: 2px solid var(--accent-muted);
   padding: 8px;
   background: rgba(7, 12, 18, 0.7);
-  height: 240px;
+  height: 200px;
 }
 
 .chart-frame--large {
-  height: 320px;
+  height: 300px;
 }
 
 .tabs {
@@ -198,5 +204,15 @@ body {
 @media (max-width: 980px) {
   .app {
     grid-template-columns: 1fr;
+  }
+
+  .inputs {
+    grid-template-columns: 1fr;
+  }
+
+  .field {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+    gap: 4px;
   }
 }

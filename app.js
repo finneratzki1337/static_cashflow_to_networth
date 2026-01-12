@@ -1,5 +1,17 @@
 const STORAGE_KEY = "arcade_pension_scenarios_v1";
-const Y_STEP = 50;
+const Y_STEP = 25;
+
+const ChartJS = window.Chart;
+const ChartDragDataPlugin =
+  window.ChartDragData || window.ChartDragDataPlugin || window.chartjsPluginDragData;
+
+if (ChartJS?.register && ChartDragDataPlugin) {
+  try {
+    ChartJS.register(ChartDragDataPlugin);
+  } catch {
+    // Ignore double-registration.
+  }
+}
 
 const elements = {
   startCapital: document.getElementById("start-capital"),
@@ -22,14 +34,14 @@ const elements = {
 };
 
 const defaultParams = {
-  startCapital: 50000,
-  durationYears: 20,
-  annualReturnSavings: 0.06,
-  annualReturnWithdrawal: 0.03,
+  startCapital: 100000,
+  durationYears: 30,
+  annualReturnSavings: 0.07,
+  annualReturnWithdrawal: 0.05,
   annualInflation: 0.02,
   payoutMode: "perpetual",
   payoutYears: 25,
-  breakpoints: [{ year: 0, monthlyRate: 1200 }],
+  breakpoints: [{ year: 0, monthlyRate: 1000 }],
 };
 
 let breakpoints = [...defaultParams.breakpoints];
@@ -39,7 +51,7 @@ let activeScenarioId = null;
 const formatCurrency = (value) =>
   new Intl.NumberFormat("en-US", {
     style: "currency",
-    currency: "USD",
+    currency: "EUR",
     maximumFractionDigits: 0,
   }).format(value);
 
@@ -90,6 +102,16 @@ const normalizeBreakpoints = (points, durationYears) => {
   return Array.from(deduped.values()).sort((a, b) => a.year - b.year);
 };
 
+const roundToStep = (value, step) => {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  if (!Number.isFinite(step) || step <= 0) {
+    return value;
+  }
+  return Math.round(value / step) * step;
+};
+
 const monthlyRateAtYear = (points, year) => {
   const sorted = [...points].sort((a, b) => a.year - b.year);
   let current = sorted[0];
@@ -138,6 +160,64 @@ const populateInputs = (params) => {
 const togglePayoutYears = () => {
   const isFixed = elements.payoutMode.value === "fixed";
   elements.payoutYearsField.style.display = isFixed ? "flex" : "none";
+};
+
+let previewRaf = null;
+
+const updateScenarioChartFromResults = (results) => {
+  if (!scenarioChart) {
+    return;
+  }
+  if (!results) {
+    scenarioChart.data.labels = [];
+    scenarioChart.data.datasets.forEach((dataset) => {
+      dataset.data = [];
+    });
+    scenarioChart.update();
+    return;
+  }
+
+  const { series } = results;
+  scenarioChart.data.labels = series.years.map((year) => year.toFixed(1));
+  scenarioChart.data.datasets[0].data = series.capitalNominal;
+  scenarioChart.data.datasets[1].data = series.capitalReal;
+  scenarioChart.data.datasets[2].data = series.payinsNominal;
+  scenarioChart.data.datasets[3].data = series.payinsReal;
+  scenarioChart.update();
+};
+
+const updateKpisFromResults = (results) => {
+  if (!results) {
+    elements.kpiEndNominal.textContent = "—";
+    elements.kpiEndReal.textContent = "—";
+    elements.kpiPayoutNominal.textContent = "—";
+    elements.kpiPayoutReal.textContent = "—";
+    return;
+  }
+  const { summary } = results;
+  elements.kpiEndNominal.textContent = formatCurrency(summary.endCapitalNominal);
+  elements.kpiEndReal.textContent = formatCurrency(summary.endCapitalReal);
+  elements.kpiPayoutNominal.textContent =
+    formatCurrency(summary.payoutMonthlyNominalAtRetirementStart);
+  elements.kpiPayoutReal.textContent = formatCurrency(summary.payoutMonthlyRealToday);
+};
+
+const computeAndRenderPreview = () => {
+  const params = buildParamsFromInputs();
+  const { results, warnings } = computeResults(params);
+  setWarnings(warnings);
+  updateScenarioChartFromResults(results);
+  updateKpisFromResults(results);
+};
+
+const schedulePreviewRender = () => {
+  if (previewRaf !== null) {
+    cancelAnimationFrame(previewRaf);
+  }
+  previewRaf = requestAnimationFrame(() => {
+    previewRaf = null;
+    computeAndRenderPreview();
+  });
 };
 
 const computeResults = (params) => {
@@ -234,19 +314,78 @@ const computeResults = (params) => {
 let scheduleChart = null;
 let scenarioChart = null;
 
+let scheduleRenderMeta = {
+  draggableByDataIndex: new Map(),
+  breakpointByDataIndex: new Map(),
+};
+
+const buildScheduleRenderData = (points, durationYears) => {
+  // Build an explicit staircase: at each breakpoint year, draw a vertical jump,
+  // then a horizontal segment that applies to the RIGHT of the breakpoint.
+  // We do this by adding a non-draggable "join" point at (year, prevRate)
+  // followed by a draggable "level" point at (year, rate).
+
+  const meta = {
+    draggableByDataIndex: new Map(),
+    breakpointByDataIndex: new Map(),
+  };
+
+  const data = [];
+  const sorted = normalizeBreakpoints(points, durationYears);
+  if (!sorted.length) {
+    sorted.push({ year: 0, monthlyRate: 0 });
+  }
+
+  // Start point
+  data.push({ x: 0, y: sorted[0].monthlyRate });
+  meta.draggableByDataIndex.set(0, true);
+  meta.breakpointByDataIndex.set(0, 0);
+
+  for (let i = 1; i < sorted.length; i += 1) {
+    const year = sorted[i].year;
+    const prevRate = sorted[i - 1].monthlyRate;
+    const rate = sorted[i].monthlyRate;
+
+    // Connector (non-draggable)
+    data.push({ x: year, y: prevRate });
+    meta.draggableByDataIndex.set(data.length - 1, false);
+
+    // Level (draggable)
+    data.push({ x: year, y: rate });
+    meta.draggableByDataIndex.set(data.length - 1, true);
+    meta.breakpointByDataIndex.set(data.length - 1, i);
+  }
+
+  // Extend to chart end with a virtual point (non-draggable)
+  const last = sorted[sorted.length - 1];
+  if (last && last.year < durationYears) {
+    data.push({ x: durationYears, y: last.monthlyRate });
+    meta.draggableByDataIndex.set(data.length - 1, false);
+  }
+
+  return { data, meta, normalizedBreakpoints: sorted };
+};
+
 const buildScheduleChart = () => {
   const ctx = document.getElementById("schedule-chart").getContext("2d");
-  scheduleChart = new Chart(ctx, {
+  if (!ChartJS) {
+    throw new Error("Chart.js not loaded. Check CDN script tag.");
+  }
+
+  const initial = buildScheduleRenderData(breakpoints, defaultParams.durationYears);
+  scheduleRenderMeta = initial.meta;
+
+  scheduleChart = new ChartJS(ctx, {
     type: "line",
     data: {
       datasets: [
         {
           label: "Monthly Savings",
-          data: breakpoints.map((point) => ({ x: point.year, y: point.monthlyRate })),
+          data: initial.data,
           borderColor: "#2ef2a6",
           backgroundColor: "#2ef2a6",
-          pointRadius: 5,
-          pointHoverRadius: 7,
+          pointRadius: (context) => (scheduleRenderMeta.draggableByDataIndex.get(context.dataIndex) ? 5 : 0),
+          pointHoverRadius: (context) => (scheduleRenderMeta.draggableByDataIndex.get(context.dataIndex) ? 7 : 0),
           stepped: "after",
           dragData: true,
           dragX: false,
@@ -262,10 +401,21 @@ const buildScheduleChart = () => {
         dragData: {
           round: Y_STEP,
           showTooltip: true,
+          onDragStart: (_event, _datasetIndex, index) => {
+            return scheduleRenderMeta.draggableByDataIndex.get(index) === true;
+          },
           onDragEnd: (_event, _datasetIndex, index, value) => {
-            breakpoints[index].monthlyRate = Math.max(0, value.y);
-            elements.startSavings.value = breakpoints[0].monthlyRate;
+            const bpIndex = scheduleRenderMeta.breakpointByDataIndex.get(index);
+            if (bpIndex === undefined) {
+              renderScheduleChart();
+              return;
+            }
+
+            const snapped = Math.max(0, roundToStep(value.y, Y_STEP));
+            breakpoints[bpIndex].monthlyRate = snapped;
+            elements.startSavings.value = breakpoints[0]?.monthlyRate ?? 0;
             renderScheduleChart();
+            schedulePreviewRender();
           },
         },
         tooltip: {
@@ -285,9 +435,10 @@ const buildScheduleChart = () => {
           title: { display: true, text: "YEARS", color: "#2ef2a6" },
         },
         y: {
+          min: 0,
           ticks: { color: "#e9f7ff" },
           grid: { color: "rgba(46, 242, 166, 0.15)" },
-          title: { display: true, text: "$/MONTH", color: "#2ef2a6" },
+          title: { display: true, text: "€/MONTH", color: "#2ef2a6" },
         },
       },
     },
@@ -318,6 +469,7 @@ const buildScheduleChart = () => {
       buildParamsFromInputs().durationYears
     );
     renderScheduleChart();
+    schedulePreviewRender();
   });
 
   canvas.addEventListener("dblclick", (event) => {
@@ -331,28 +483,49 @@ const buildScheduleChart = () => {
       return;
     }
     const index = points[0].index;
-    if (breakpoints[index].year === 0) {
+    const bpIndex = scheduleRenderMeta.breakpointByDataIndex.get(index);
+    if (bpIndex === undefined) {
       return;
     }
-    breakpoints.splice(index, 1);
+    if (breakpoints[bpIndex].year === 0) {
+      return;
+    }
+    breakpoints.splice(bpIndex, 1);
     renderScheduleChart();
+    schedulePreviewRender();
   });
 };
 
 const renderScheduleChart = () => {
   const durationYears = buildParamsFromInputs().durationYears;
   breakpoints = normalizeBreakpoints(breakpoints, durationYears);
+
+  const maxBpRate = breakpoints.reduce(
+    (maxValue, point) => Math.max(maxValue, point.monthlyRate),
+    0
+  );
+  const baseRate = breakpoints[0]?.monthlyRate ?? 0;
+  const targetMax = Math.max(maxBpRate, baseRate) * 1.5;
+  const yMax = Math.max(Y_STEP * 4, roundToStep(targetMax, Y_STEP));
+  scheduleChart.options.scales.y.max = yMax;
+
   scheduleChart.options.scales.x.max = durationYears;
-  scheduleChart.data.datasets[0].data = breakpoints.map((point) => ({
-    x: point.year,
-    y: point.monthlyRate,
-  }));
+
+  const render = buildScheduleRenderData(breakpoints, durationYears);
+  // Keep canonical breakpoints normalized, but render uses expanded staircase points.
+  breakpoints = render.normalizedBreakpoints;
+  scheduleRenderMeta = render.meta;
+  scheduleChart.data.datasets[0].data = render.data;
   scheduleChart.update();
 };
 
 const buildScenarioChart = () => {
   const ctx = document.getElementById("scenario-chart").getContext("2d");
-  scenarioChart = new Chart(ctx, {
+  if (!ChartJS) {
+    throw new Error("Chart.js not loaded. Check CDN script tag.");
+  }
+
+  scenarioChart = new ChartJS(ctx, {
     type: "line",
     data: {
       labels: [],
@@ -418,41 +591,6 @@ const buildScenarioChart = () => {
   });
 };
 
-const updateScenarioChart = (scenario) => {
-  if (!scenario) {
-    scenarioChart.data.labels = [];
-    scenarioChart.data.datasets.forEach((dataset) => {
-      dataset.data = [];
-    });
-    scenarioChart.update();
-    return;
-  }
-
-  const { series } = scenario.results;
-  scenarioChart.data.labels = series.years.map((year) => year.toFixed(1));
-  scenarioChart.data.datasets[0].data = series.capitalNominal;
-  scenarioChart.data.datasets[1].data = series.capitalReal;
-  scenarioChart.data.datasets[2].data = series.payinsNominal;
-  scenarioChart.data.datasets[3].data = series.payinsReal;
-  scenarioChart.update();
-};
-
-const updateKpis = (scenario) => {
-  if (!scenario) {
-    elements.kpiEndNominal.textContent = "—";
-    elements.kpiEndReal.textContent = "—";
-    elements.kpiPayoutNominal.textContent = "—";
-    elements.kpiPayoutReal.textContent = "—";
-    return;
-  }
-  const { summary } = scenario.results;
-  elements.kpiEndNominal.textContent = formatCurrency(summary.endCapitalNominal);
-  elements.kpiEndReal.textContent = formatCurrency(summary.endCapitalReal);
-  elements.kpiPayoutNominal.textContent =
-    formatCurrency(summary.payoutMonthlyNominalAtRetirementStart);
-  elements.kpiPayoutReal.textContent = formatCurrency(summary.payoutMonthlyRealToday);
-};
-
 const renderTabs = () => {
   elements.tabs.innerHTML = "";
   scenarios.forEach((scenario) => {
@@ -496,8 +634,7 @@ const setActiveScenario = (scenarioId) => {
     populateInputs(scenario.params);
     renderScheduleChart();
   }
-  updateScenarioChart(scenario);
-  updateKpis(scenario);
+  schedulePreviewRender();
   renderTabs();
   persistScenarios();
 };
@@ -544,14 +681,15 @@ const handleInputChange = () => {
   buildParamsFromInputs();
   elements.startSavings.value = breakpoints[0]?.monthlyRate ?? 0;
   renderScheduleChart();
-  setWarnings([]);
   togglePayoutYears();
+  schedulePreviewRender();
 };
 
 const updateStartSavings = () => {
   const value = Math.max(0, toNumber(elements.startSavings.value));
   breakpoints[0].monthlyRate = value;
   renderScheduleChart();
+  schedulePreviewRender();
 };
 
 const initialize = () => {
@@ -559,6 +697,9 @@ const initialize = () => {
   buildScheduleChart();
   buildScenarioChart();
   renderScheduleChart();
+
+  // Live preview for current working inputs (even before saving scenarios).
+  schedulePreviewRender();
 
   loadScenarios();
   renderTabs();
@@ -568,13 +709,13 @@ const initialize = () => {
   }
 
   elements.payoutMode.addEventListener("change", handleInputChange);
-  elements.startCapital.addEventListener("change", handleInputChange);
-  elements.returnSavings.addEventListener("change", handleInputChange);
-  elements.returnWithdrawal.addEventListener("change", handleInputChange);
-  elements.inflation.addEventListener("change", handleInputChange);
-  elements.duration.addEventListener("change", handleInputChange);
-  elements.payoutYears.addEventListener("change", handleInputChange);
-  elements.startSavings.addEventListener("change", updateStartSavings);
+  elements.startCapital.addEventListener("input", handleInputChange);
+  elements.returnSavings.addEventListener("input", handleInputChange);
+  elements.returnWithdrawal.addEventListener("input", handleInputChange);
+  elements.inflation.addEventListener("input", handleInputChange);
+  elements.duration.addEventListener("input", handleInputChange);
+  elements.payoutYears.addEventListener("input", handleInputChange);
+  elements.startSavings.addEventListener("input", updateStartSavings);
   elements.saveScenario.addEventListener("click", saveScenario);
 };
 
