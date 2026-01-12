@@ -32,10 +32,27 @@ body {
   grid-column: 1 / -1;
   border: 2px solid var(--accent);
   padding: 16px 20px;
-  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  text-align: left;
   background: rgba(17, 25, 35, 0.85);
   text-transform: uppercase;
   letter-spacing: 2px;
+}
+
+.app__logo {
+  display: block;
+  margin: 0;
+  height: 56px;
+  width: auto;
+  image-rendering: pixelated;
+}
+
+.app__title {
+  display: flex;
+  flex-direction: column;
 }
 
 .app__header h1 {
@@ -143,6 +160,11 @@ body {
   flex-wrap: wrap;
 }
 
+.tab-wrap {
+  display: inline-flex;
+  align-items: stretch;
+}
+
 .tab {
   border: 2px solid var(--accent-muted);
   padding: 6px 12px;
@@ -155,6 +177,45 @@ body {
 
 .tab.active {
   border-color: var(--accent);
+  color: var(--accent);
+}
+
+.tab-delete {
+  border: 2px solid var(--accent-muted);
+  border-left: 0;
+  padding: 6px 10px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 16px;
+  text-transform: uppercase;
+}
+
+.tab-wrap .tab.active + .tab-delete {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.tab-delete:hover {
+  background: rgba(46, 242, 166, 0.12);
+}
+
+.scenario-tooltip {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  border: 2px solid var(--accent);
+  background: rgba(17, 25, 35, 0.96);
+  color: var(--text);
+  padding: 10px 12px;
+  max-width: 420px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-size: 14px;
+  display: none;
+}
+
+.scenario-tooltip strong {
   color: var(--accent);
 }
 
@@ -204,6 +265,15 @@ body {
 @media (max-width: 980px) {
   .app {
     grid-template-columns: 1fr;
+  }
+
+  .app__header {
+    flex-direction: column;
+    text-align: center;
+  }
+
+  .app__logo {
+    height: 44px;
   }
 
   .inputs {

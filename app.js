@@ -85,6 +85,41 @@ const romanNumerals = [
 const getScenarioName = (index) =>
   `Scenario ${romanNumerals[index] || index + 1}`;
 
+const formatSchedule = (points) => {
+  return points
+    .map((bp) => `${bp.year}Y→${formatCurrency(bp.monthlyRate)}/MO`)
+    .join(" | ");
+};
+
+const buildScenarioTooltipHtml = (scenario) => {
+  const p = scenario.params;
+  const payout =
+    p.payoutMode === "fixed" ? `FIXED (${p.payoutYears}Y)` : "PERPETUAL";
+
+  return `
+    <div><strong>${scenario.name}</strong></div>
+    <div>START CAPITAL: ${formatCurrency(p.startCapital)}</div>
+    <div>DURATION: ${p.durationYears}Y</div>
+    <div>RETURN SAVINGS: ${formatPercent(p.annualReturnSavings)}</div>
+    <div>RETURN WITHDRAWAL: ${formatPercent(p.annualReturnWithdrawal)}</div>
+    <div>INFLATION: ${formatPercent(p.annualInflation)}</div>
+    <div>PAYOUT MODE: ${payout}</div>
+    <div>SCHEDULE: ${formatSchedule(p.breakpoints)}</div>
+  `.trim();
+};
+
+const getOrCreateScenarioTooltip = () => {
+  let el = document.getElementById("scenario-tooltip");
+  if (el) {
+    return el;
+  }
+  el = document.createElement("div");
+  el.id = "scenario-tooltip";
+  el.className = "scenario-tooltip";
+  document.body.appendChild(el);
+  return el;
+};
+
 const normalizeBreakpoints = (points, durationYears) => {
   const deduped = new Map();
   points.forEach((point) => {
@@ -565,7 +600,12 @@ const buildScenarioChart = () => {
       maintainAspectRatio: false,
       plugins: {
         legend: {
-          labels: { color: "#e9f7ff" },
+          labels: {
+            color: "#e9f7ff",
+            usePointStyle: true,
+            pointStyle: "line",
+            boxWidth: 34,
+          },
         },
         tooltip: {
           callbacks: {
@@ -594,7 +634,11 @@ const buildScenarioChart = () => {
 const renderTabs = () => {
   elements.tabs.innerHTML = "";
   scenarios.forEach((scenario) => {
+    const wrap = document.createElement("div");
+    wrap.className = "tab-wrap";
+
     const button = document.createElement("button");
+    button.type = "button";
     button.className = "tab";
     button.textContent = scenario.name;
     if (scenario.id === activeScenarioId) {
@@ -603,12 +647,51 @@ const renderTabs = () => {
     button.addEventListener("click", () => {
       setActiveScenario(scenario.id);
     });
-    elements.tabs.appendChild(button);
+
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "tab-delete";
+    del.textContent = "DEL";
+    del.setAttribute("aria-label", `Delete ${scenario.name}`);
+    del.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      deleteScenario(scenario.id);
+    });
+
+    wrap.appendChild(button);
+    wrap.appendChild(del);
+    elements.tabs.appendChild(wrap);
   });
 };
 
 const renderSummaryTable = () => {
   elements.summaryBody.innerHTML = "";
+  const tooltip = getOrCreateScenarioTooltip();
+
+  const showTooltip = (scenario, event) => {
+    tooltip.innerHTML = buildScenarioTooltipHtml(scenario);
+    tooltip.style.display = "block";
+    moveTooltip(event);
+  };
+
+  const hideTooltip = () => {
+    tooltip.style.display = "none";
+  };
+
+  const moveTooltip = (event) => {
+    if (tooltip.style.display !== "block") {
+      return;
+    }
+    const pad = 12;
+    const maxX = window.innerWidth - tooltip.offsetWidth - pad;
+    const maxY = window.innerHeight - tooltip.offsetHeight - pad;
+    const x = Math.min(event.clientX + pad, maxX);
+    const y = Math.min(event.clientY + pad, maxY);
+    tooltip.style.left = `${x}px`;
+    tooltip.style.top = `${y}px`;
+  };
+
   scenarios.forEach((scenario) => {
     const row = document.createElement("tr");
     const { summary } = scenario.results;
@@ -619,6 +702,11 @@ const renderSummaryTable = () => {
       <td>${formatCurrency(summary.payoutMonthlyNominalAtRetirementStart)}</td>
       <td>${formatCurrency(summary.payoutMonthlyRealToday)}</td>
     `;
+
+    row.addEventListener("mouseenter", (event) => showTooltip(scenario, event));
+    row.addEventListener("mousemove", moveTooltip);
+    row.addEventListener("mouseleave", hideTooltip);
+
     elements.summaryBody.appendChild(row);
   });
 };
@@ -644,6 +732,30 @@ const persistScenarios = () => {
     STORAGE_KEY,
     JSON.stringify({ scenarios, activeScenarioId })
   );
+};
+
+const deleteScenario = (scenarioId) => {
+  const index = scenarios.findIndex((s) => s.id === scenarioId);
+  if (index === -1) {
+    return;
+  }
+
+  scenarios.splice(index, 1);
+
+  if (activeScenarioId === scenarioId) {
+    activeScenarioId = scenarios[index]?.id || scenarios[index - 1]?.id || null;
+  }
+
+  renderTabs();
+  renderSummaryTable();
+  persistScenarios();
+
+  if (activeScenarioId) {
+    setActiveScenario(activeScenarioId);
+  } else {
+    // No scenarios left: keep live preview from current inputs.
+    schedulePreviewRender();
+  }
 };
 
 const loadScenarios = () => {
