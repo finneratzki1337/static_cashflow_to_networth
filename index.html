@@ -7,11 +7,7 @@
     <link rel="icon" type="image/png" href="assets/timo_logo_small.png" />
     <link rel="stylesheet" href="styles.css" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link
-      rel="preconnect"
-      href="https://fonts.gstatic.com"
-      crossorigin
-    />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       href="https://fonts.googleapis.com/css2?family=VT323&display=swap"
       rel="stylesheet"
@@ -68,6 +64,76 @@
             <span>PAYOUT YEARS</span>
             <input type="number" id="payout-years" min="1" max="60" step="1" value="25" />
           </label>
+
+          <details class="inputs__fold">
+            <summary>TAX (GERMANY)</summary>
+            <div class="inputs__fold-grid">
+              <label class="field">
+                <span>TAX ENABLED</span>
+                <input type="checkbox" id="tax-enabled" />
+              </label>
+              <label class="field">
+                <span>APPLY ALLOWANCE</span>
+                <input type="checkbox" id="tax-apply-allowance" />
+              </label>
+              <label class="field">
+                <span>INCLUDE SOLI</span>
+                <input type="checkbox" id="tax-include-soli" />
+              </label>
+              <label class="field">
+                <span>INCLUDE CHURCH</span>
+                <input type="checkbox" id="tax-include-church" />
+              </label>
+
+              <label class="field">
+                <span>KEST RATE</span>
+                <input type="number" id="tax-kest-rate" step="0.001" value="0.25" />
+              </label>
+              <label class="field">
+                <span>SOLI RATE</span>
+                <input type="number" id="tax-soli-rate" step="0.001" value="0.055" />
+              </label>
+              <label class="field">
+                <span>CHURCH RATE</span>
+                <input
+                  type="number"
+                  id="tax-church-rate"
+                  step="0.01"
+                  value="0.00"
+                  list="tax-church-rate-presets"
+                />
+                <datalist id="tax-church-rate-presets">
+                  <option value="0.00"></option>
+                  <option value="0.08"></option>
+                  <option value="0.09"></option>
+                </datalist>
+              </label>
+              <label class="field">
+                <span>ALLOWANCE / YEAR</span>
+                <input
+                  type="number"
+                  id="tax-allowance-annual"
+                  min="0"
+                  step="50"
+                  value="1000"
+                  list="tax-allowance-presets"
+                />
+                <datalist id="tax-allowance-presets">
+                  <option value="1000"></option>
+                  <option value="2000"></option>
+                </datalist>
+              </label>
+
+              <div class="field field--inline">
+                <span>EFFECTIVE TAX RATE</span>
+                <output id="tax-effective-rate">—</output>
+              </div>
+
+              <p class="inputs__note">
+                SIMPLIFIED ABGELTUNGSTEUER ON REALIZED GAINS. NO ETF-SPECIFIC RULES. NOT TAX ADVICE.
+              </p>
+            </div>
+          </details>
         </form>
 
         <div class="panel__subheader">
@@ -100,11 +166,27 @@
             <strong id="kpi-end-real">—</strong>
           </div>
           <div>
-            <span>PAYOUT / MONTH (NOMINAL)</span>
+            <span>CAPITAL GAINS (NOMINAL)</span>
+            <strong id="kpi-gains-nominal">—</strong>
+          </div>
+          <div>
+            <span>CAPITAL GAINS (REAL)</span>
+            <strong id="kpi-gains-real">—</strong>
+          </div>
+          <div>
+            <span>GROSS WITHDRAWAL / MONTH 1 (NOMINAL)*</span>
+            <strong id="kpi-gross-nominal">—</strong>
+          </div>
+          <div>
+            <span>TAX / MONTH 1 (NOMINAL)*</span>
+            <strong id="kpi-tax-nominal">—</strong>
+          </div>
+          <div>
+            <span>NET PAYOUT / MONTH (NOMINAL)</span>
             <strong id="kpi-payout-nominal">—</strong>
           </div>
           <div>
-            <span>PAYOUT / MONTH (REAL)</span>
+            <span>SUSTAINABLE REAL INCOME</span>
             <strong id="kpi-payout-real">—</strong>
           </div>
         </div>
@@ -119,8 +201,8 @@
                 <th>SCENARIO</th>
                 <th>END CAPITAL NOMINAL</th>
                 <th>END CAPITAL REAL</th>
-                <th>PAYOUT NOMINAL</th>
-                <th>PAYOUT REAL</th>
+                <th>NET PAYOUT NOMINAL</th>
+                <th>SUSTAINABLE REAL INCOME</th>
               </tr>
             </thead>
             <tbody id="summary-body"></tbody>
@@ -128,6 +210,15 @@
         </div>
       </section>
     </main>
+
+    <footer class="app__footer">
+      <p class="app__footnote">
+        * YEAR 1 VALUES ARE MONTHLY AVERAGES OVER THE FIRST 12 RETIREMENT MONTHS. THE SUSTAINABLE REAL INCOME
+        IS SOLVED AS A CONSTANT REAL (INFLATION-ADJUSTED) AMOUNT THAT STAYS FEASIBLE OVER THE FULL RETIREMENT
+        HORIZON (FIXED N YEARS OR A 200Y PROXY). DUE TO COST BASIS SHRINKING, THE TAXABLE GAINS SHARE CAN RISE
+        OVER TIME; AND THE ANNUAL ALLOWANCE RESETS EACH YEAR, MAKING EARLY MONTHS LOWER-TAX THAN LATER MONTHS.
+      </p>
+    </footer>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-dragdata@2.3.1/dist/chartjs-plugin-dragdata.min.js"></script>

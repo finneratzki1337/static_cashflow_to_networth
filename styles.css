@@ -102,6 +102,37 @@ body {
   gap: 8px 14px;
 }
 
+.inputs__fold {
+  grid-column: 1 / -1;
+  border: 2px solid var(--accent-muted);
+  background: rgba(7, 12, 18, 0.35);
+}
+
+.inputs__fold summary {
+  cursor: pointer;
+  padding: 8px 10px;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  border-bottom: 2px solid var(--accent-muted);
+  list-style: none;
+}
+
+.inputs__fold summary::-webkit-details-marker {
+  display: none;
+}
+
+.inputs__fold[open] summary {
+  border-bottom-color: var(--accent);
+}
+
+.inputs__fold-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 14px;
+  padding: 10px;
+}
+
 .field {
   display: grid;
   grid-template-columns: 170px 1fr;
@@ -123,8 +154,35 @@ body {
   font-size: 16px;
 }
 
+.field input[type="checkbox"] {
+  width: 22px;
+  height: 22px;
+  justify-self: start;
+  accent-color: var(--accent);
+  border: 2px solid var(--accent-muted);
+}
+
+.field output {
+  padding: 4px 8px;
+  border: 2px solid var(--accent-muted);
+  color: var(--text);
+  font-size: 16px;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+}
+
 .field--inline {
   grid-column: 1 / -1;
+}
+
+.inputs__note {
+  grid-column: 1 / -1;
+  opacity: 0.85;
+  font-size: 14px;
+  line-height: 1.2;
+  text-transform: uppercase;
+  letter-spacing: 1px;
 }
 
 .btn {
@@ -221,19 +279,40 @@ body {
 
 .kpis {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
   border: 2px solid var(--accent-muted);
-  padding: 10px;
+  padding: 8px;
   text-transform: uppercase;
-  font-size: 16px;
+  font-size: 14px;
 }
 
 .kpis strong {
   display: block;
   margin-top: 4px;
-  font-size: 20px;
+  font-size: 18px;
   color: var(--accent);
+}
+
+.app__footer {
+  margin-top: 18px;
+  border: 2px solid var(--accent-muted);
+  padding: 10px 12px;
+  background: rgba(17, 25, 35, 0.65);
+}
+
+.app__footnote {
+  opacity: 0.85;
+  font-size: 13px;
+  line-height: 1.2;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+@media (max-width: 980px) {
+  .kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .table-wrap {

@@ -1,4 +1,4 @@
-const STORAGE_KEY = "arcade_pension_scenarios_v1";
+const STORAGE_KEY = "arcade_pension_scenarios_v2";
 const Y_STEP = 25;
 
 const ChartJS = window.Chart;
@@ -23,14 +23,27 @@ const elements = {
   payoutMode: document.getElementById("payout-mode"),
   payoutYears: document.getElementById("payout-years"),
   payoutYearsField: document.getElementById("payout-years-field"),
+  taxEnabled: document.getElementById("tax-enabled"),
+  taxApplyAllowance: document.getElementById("tax-apply-allowance"),
+  taxIncludeSoli: document.getElementById("tax-include-soli"),
+  taxIncludeChurch: document.getElementById("tax-include-church"),
+  taxKestRate: document.getElementById("tax-kest-rate"),
+  taxSoliRate: document.getElementById("tax-soli-rate"),
+  taxChurchRate: document.getElementById("tax-church-rate"),
+  taxAllowanceAnnual: document.getElementById("tax-allowance-annual"),
+  taxEffectiveRate: document.getElementById("tax-effective-rate"),
   saveScenario: document.getElementById("save-scenario"),
   warnings: document.getElementById("warnings"),
   tabs: document.getElementById("scenario-tabs"),
   summaryBody: document.getElementById("summary-body"),
   kpiEndNominal: document.getElementById("kpi-end-nominal"),
   kpiEndReal: document.getElementById("kpi-end-real"),
+  kpiGainsNominal: document.getElementById("kpi-gains-nominal"),
+  kpiGainsReal: document.getElementById("kpi-gains-real"),
   kpiPayoutNominal: document.getElementById("kpi-payout-nominal"),
   kpiPayoutReal: document.getElementById("kpi-payout-real"),
+  kpiGrossNominal: document.getElementById("kpi-gross-nominal"),
+  kpiTaxNominal: document.getElementById("kpi-tax-nominal"),
 };
 
 const defaultParams = {
@@ -41,6 +54,16 @@ const defaultParams = {
   annualInflation: 0.02,
   payoutMode: "perpetual",
   payoutYears: 25,
+  tax: {
+    taxEnabled: true,
+    applyAllowance: true,
+    includeSolidaritySurcharge: true,
+    includeChurchTax: false,
+    kapitalertragsteuerRate: 0.25,
+    solidarityRate: 0.055,
+    churchTaxRate: 0.0,
+    allowanceAnnual: 1000,
+  },
   breakpoints: [{ year: 0, monthlyRate: 1000 }],
 };
 
@@ -63,6 +86,27 @@ const toNumber = (value, fallback = 0) => {
 };
 
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+
+const computeEffectiveTaxRate = (tax) => {
+  const base = Math.max(0, toNumber(tax?.kapitalertragsteuerRate, 0));
+  const soli = tax?.includeSolidaritySurcharge
+    ? Math.max(0, toNumber(tax?.solidarityRate, 0))
+    : 0;
+  const church = tax?.includeChurchTax
+    ? Math.max(0, toNumber(tax?.churchTaxRate, 0))
+    : 0;
+  return base * (1 + soli + church);
+};
+
+const updateTaxDerivedDisplay = (tax) => {
+  if (!elements.taxEffectiveRate) {
+    return;
+  }
+  const eff = computeEffectiveTaxRate(tax);
+  elements.taxEffectiveRate.textContent = Number.isFinite(eff)
+    ? `${(eff * 100).toFixed(3)}%`
+    : "—";
+};
 
 const romanNumerals = [
   "I",
@@ -164,6 +208,17 @@ const buildParamsFromInputs = () => {
   const payoutMode = elements.payoutMode.value;
   const payoutYears = Math.round(toNumber(elements.payoutYears.value, 1));
 
+  const tax = {
+    taxEnabled: Boolean(elements.taxEnabled?.checked),
+    applyAllowance: Boolean(elements.taxApplyAllowance?.checked),
+    includeSolidaritySurcharge: Boolean(elements.taxIncludeSoli?.checked),
+    includeChurchTax: Boolean(elements.taxIncludeChurch?.checked),
+    kapitalertragsteuerRate: Math.max(0, toNumber(elements.taxKestRate?.value)),
+    solidarityRate: Math.max(0, toNumber(elements.taxSoliRate?.value)),
+    churchTaxRate: Math.max(0, toNumber(elements.taxChurchRate?.value)),
+    allowanceAnnual: Math.max(0, toNumber(elements.taxAllowanceAnnual?.value)),
+  };
+
   const params = {
     startCapital,
     durationYears,
@@ -172,10 +227,12 @@ const buildParamsFromInputs = () => {
     annualInflation: toNumber(elements.inflation.value) / 100,
     payoutMode,
     payoutYears: payoutMode === "fixed" ? Math.max(1, payoutYears) : null,
+    tax,
     breakpoints: normalizeBreakpoints(breakpoints, durationYears),
   };
 
   breakpoints = params.breakpoints;
+  updateTaxDerivedDisplay(params.tax);
   return params;
 };
 
@@ -188,6 +245,39 @@ const populateInputs = (params) => {
   elements.payoutMode.value = params.payoutMode;
   elements.payoutYears.value = params.payoutYears ?? defaultParams.payoutYears;
   elements.startSavings.value = params.breakpoints[0]?.monthlyRate ?? 0;
+
+  const tax = {
+    ...defaultParams.tax,
+    ...(params.tax || {}),
+  };
+
+  if (elements.taxEnabled) {
+    elements.taxEnabled.checked = Boolean(tax.taxEnabled);
+  }
+  if (elements.taxApplyAllowance) {
+    elements.taxApplyAllowance.checked = Boolean(tax.applyAllowance);
+  }
+  if (elements.taxIncludeSoli) {
+    elements.taxIncludeSoli.checked = Boolean(tax.includeSolidaritySurcharge);
+  }
+  if (elements.taxIncludeChurch) {
+    elements.taxIncludeChurch.checked = Boolean(tax.includeChurchTax);
+  }
+  if (elements.taxKestRate) {
+    elements.taxKestRate.value = String(tax.kapitalertragsteuerRate);
+  }
+  if (elements.taxSoliRate) {
+    elements.taxSoliRate.value = String(tax.solidarityRate);
+  }
+  if (elements.taxChurchRate) {
+    elements.taxChurchRate.value = String(tax.churchTaxRate);
+  }
+  if (elements.taxAllowanceAnnual) {
+    elements.taxAllowanceAnnual.value = String(tax.allowanceAnnual);
+  }
+
+  updateTaxDerivedDisplay(tax);
+
   breakpoints = normalizeBreakpoints(params.breakpoints, params.durationYears);
   togglePayoutYears();
 };
@@ -225,16 +315,28 @@ const updateKpisFromResults = (results) => {
   if (!results) {
     elements.kpiEndNominal.textContent = "—";
     elements.kpiEndReal.textContent = "—";
+    elements.kpiGainsNominal.textContent = "—";
+    elements.kpiGainsReal.textContent = "—";
     elements.kpiPayoutNominal.textContent = "—";
     elements.kpiPayoutReal.textContent = "—";
+    elements.kpiGrossNominal.textContent = "—";
+    elements.kpiTaxNominal.textContent = "—";
     return;
   }
   const { summary } = results;
   elements.kpiEndNominal.textContent = formatCurrency(summary.endCapitalNominal);
   elements.kpiEndReal.textContent = formatCurrency(summary.endCapitalReal);
+  elements.kpiGainsNominal.textContent = formatCurrency(summary.capitalGainsNominal);
+  elements.kpiGainsReal.textContent = formatCurrency(summary.capitalGainsReal);
   elements.kpiPayoutNominal.textContent =
     formatCurrency(summary.payoutMonthlyNominalAtRetirementStart);
   elements.kpiPayoutReal.textContent = formatCurrency(summary.payoutMonthlyRealToday);
+  elements.kpiGrossNominal.textContent = formatCurrency(
+    summary.grossWithdrawalNominalAvgYear1 ?? summary.grossWithdrawalNominalMonth1 ?? 0
+  );
+  elements.kpiTaxNominal.textContent = formatCurrency(
+    summary.taxPaidNominalAvgYear1 ?? summary.taxPaidNominalPerMonth ?? 0
+  );
 };
 
 const computeAndRenderPreview = () => {
@@ -253,6 +355,341 @@ const schedulePreviewRender = () => {
     previewRaf = null;
     computeAndRenderPreview();
   });
+};
+
+const computeGainsRatio = (portfolioValue, costBasis) => {
+  if (portfolioValue <= 0 || !Number.isFinite(portfolioValue)) {
+    return 0;
+  }
+  return clamp((portfolioValue - costBasis) / portfolioValue, 0, 1);
+};
+
+const computeGrossForTargetNet = ({
+  portfolioValue,
+  costBasis,
+  allowanceRemaining,
+  allowanceEnabled,
+  effectiveTaxRate,
+  taxEnabled,
+  targetNetNominal,
+}) => {
+  const pv = portfolioValue;
+  if (pv <= 0 || !Number.isFinite(pv)) {
+    return { ok: false, reason: "empty-portfolio" };
+  }
+
+  const netNom = Math.max(0, targetNetNominal);
+  const g = computeGainsRatio(pv, costBasis);
+
+  // Even if tax is disabled, we still track the principal vs gains split for cost-basis accounting.
+  const realizedGainForGross = (gross) => gross * g;
+
+  if (!taxEnabled || effectiveTaxRate <= 0 || g <= 0) {
+    const gross = netNom;
+    const realizedGain = realizedGainForGross(gross);
+    return {
+      ok: true,
+      gross,
+      tax: 0,
+      realizedGain,
+      gainCoveredByAllowance: 0,
+      principalPart: Math.max(0, gross - realizedGain),
+    };
+  }
+
+  const e = effectiveTaxRate;
+  const allowRem = Math.max(0, allowanceRemaining);
+  const denom = 1 - e * g;
+  if (denom <= 0 || !Number.isFinite(denom)) {
+    return { ok: false, reason: "tax-denominator" };
+  }
+
+  let gross = 0;
+
+  if (allowanceEnabled) {
+    if (netNom * g <= allowRem) {
+      gross = netNom;
+    } else {
+      gross = (netNom - allowRem * e) / denom;
+    }
+  } else {
+    gross = netNom / denom;
+  }
+
+  if (!Number.isFinite(gross) || gross < 0) {
+    return { ok: false, reason: "tax-gross-invalid" };
+  }
+
+  if (gross > pv + 1e-9) {
+    return { ok: false, reason: "insufficient-funds" };
+  }
+
+  const realizedGain = realizedGainForGross(gross);
+  const gainCoveredByAllowance = allowanceEnabled ? Math.min(realizedGain, allowRem) : 0;
+  const taxableGain = Math.max(0, realizedGain - gainCoveredByAllowance);
+  const tax = taxableGain * e;
+  const principalPart = Math.max(0, gross - realizedGain);
+
+  return {
+    ok: true,
+    gross,
+    tax,
+    realizedGain,
+    gainCoveredByAllowance,
+    principalPart,
+  };
+};
+
+const simulateRetirement = ({
+  targetNetRealAtRetirementStart,
+  months,
+  portfolioValue0,
+  costBasis0,
+  monthlyReturnNominal,
+  monthlyInflation,
+  tax,
+}) => {
+  let pv = Math.max(0, portfolioValue0);
+  let basis = Math.max(0, costBasis0);
+
+  const taxEnabled = Boolean(tax?.taxEnabled);
+  const allowanceEnabled = Boolean(tax?.applyAllowance);
+  const allowanceAnnual = Math.max(0, toNumber(tax?.allowanceAnnual, 0));
+  const effectiveTaxRate = computeEffectiveTaxRate(tax);
+
+  let allowRem = allowanceEnabled ? allowanceAnnual : 0;
+  let cpi = 1;
+
+  for (let m = 0; m < months; m += 1) {
+    if (!Number.isFinite(pv) || pv <= 0) {
+      return { ok: false, reason: "depleted", pvEndNominal: 0, cpiEnd: cpi };
+    }
+
+    if (allowanceEnabled && (m % 12 === 0)) {
+      allowRem = allowanceAnnual;
+    }
+
+    pv *= 1 + monthlyReturnNominal;
+
+    const targetNetNominal = targetNetRealAtRetirementStart * cpi;
+    const grossResult = computeGrossForTargetNet({
+      portfolioValue: pv,
+      costBasis: basis,
+      allowanceRemaining: allowRem,
+      allowanceEnabled,
+      effectiveTaxRate,
+      taxEnabled,
+      targetNetNominal,
+    });
+
+    if (!grossResult.ok) {
+      return { ok: false, reason: grossResult.reason, pvEndNominal: pv, cpiEnd: cpi };
+    }
+
+    pv -= grossResult.gross;
+    basis = Math.max(0, basis - grossResult.principalPart);
+    allowRem = Math.max(0, allowRem - grossResult.gainCoveredByAllowance);
+
+    cpi *= 1 + monthlyInflation;
+    if (!Number.isFinite(cpi) || cpi <= 0) {
+      return { ok: false, reason: "inflation-overflow", pvEndNominal: pv, cpiEnd: cpi };
+    }
+  }
+
+  return {
+    ok: true,
+    pvEndNominal: pv,
+    cpiEnd: cpi,
+  };
+};
+
+const solveNetPayoutFixed = ({
+  months,
+  portfolioValue0,
+  costBasis0,
+  monthlyReturnNominal,
+  monthlyInflation,
+  tax,
+}) => {
+  const objective = (netReal) => {
+    const sim = simulateRetirement({
+      targetNetRealAtRetirementStart: netReal,
+      months,
+      portfolioValue0,
+      costBasis0,
+      monthlyReturnNominal,
+      monthlyInflation,
+      tax,
+    });
+    if (!sim.ok) {
+      return { ok: false, pvEndReal: -1 };
+    }
+    const pvEndReal = sim.pvEndNominal / sim.cpiEnd;
+    return { ok: true, pvEndReal };
+  };
+
+  const pv0Real = portfolioValue0;
+
+  let low = 0;
+  let high = Math.max(1, pv0Real / Math.max(1, months));
+
+  for (let i = 0; i < 50; i += 1) {
+    const res = objective(high);
+    if (!res.ok || res.pvEndReal <= 0) {
+      break;
+    }
+    high *= 1.6;
+    if (high > pv0Real * 10) {
+      break;
+    }
+  }
+
+  let best = 0;
+  for (let iter = 0; iter < 60; iter += 1) {
+    const mid = (low + high) / 2;
+    const res = objective(mid);
+    if (res.ok && res.pvEndReal > 0) {
+      best = mid;
+      low = mid;
+    } else {
+      high = mid;
+    }
+  }
+
+  return best;
+};
+
+const solveNetPayoutPerpetual = ({
+  months,
+  portfolioValue0,
+  costBasis0,
+  monthlyReturnNominal,
+  monthlyInflation,
+  tax,
+  eps,
+}) => {
+  const pv0Real = portfolioValue0;
+  const minEndReal = pv0Real * (1 - eps);
+
+  const isSustainable = (netReal) => {
+    const sim = simulateRetirement({
+      targetNetRealAtRetirementStart: netReal,
+      months,
+      portfolioValue0,
+      costBasis0,
+      monthlyReturnNominal,
+      monthlyInflation,
+      tax,
+    });
+    if (!sim.ok) {
+      return false;
+    }
+    const pvEndReal = sim.pvEndNominal / sim.cpiEnd;
+    return pvEndReal >= minEndReal;
+  };
+
+  let low = 0;
+  let high = Math.max(1, pv0Real * 0.01);
+  if (isSustainable(high)) {
+    for (let i = 0; i < 50; i += 1) {
+      high *= 1.6;
+      if (!isSustainable(high)) {
+        break;
+      }
+      if (high > pv0Real * 2) {
+        break;
+      }
+    }
+  }
+
+  let best = 0;
+  for (let iter = 0; iter < 60; iter += 1) {
+    const mid = (low + high) / 2;
+    if (isSustainable(mid)) {
+      best = mid;
+      low = mid;
+    } else {
+      high = mid;
+    }
+  }
+
+  return best;
+};
+
+const computeYearOneAverages = ({
+  netRealAtRetirementStart,
+  portfolioValue0,
+  costBasis0,
+  monthlyReturnNominal,
+  monthlyInflation,
+  tax,
+}) => {
+  const months = 12;
+  let pv = Math.max(0, portfolioValue0);
+  let basis = Math.max(0, costBasis0);
+
+  const taxEnabled = Boolean(tax?.taxEnabled);
+  const allowanceEnabled = Boolean(tax?.applyAllowance);
+  const allowanceAnnual = Math.max(0, toNumber(tax?.allowanceAnnual, 0));
+  const effectiveTaxRate = computeEffectiveTaxRate(tax);
+
+  let allowRem = allowanceEnabled ? allowanceAnnual : 0;
+  let cpi = 1;
+
+  let grossSum = 0;
+  let taxSum = 0;
+  let counted = 0;
+
+  for (let m = 0; m < months; m += 1) {
+    if (!Number.isFinite(pv) || pv <= 0) {
+      break;
+    }
+
+    // Simplest year boundary: reset at the start of each simulation year.
+    if (allowanceEnabled && (m % 12 === 0)) {
+      allowRem = allowanceAnnual;
+    }
+
+    pv *= 1 + monthlyReturnNominal;
+
+    const targetNetNominal = netRealAtRetirementStart * cpi;
+    const grossResult = computeGrossForTargetNet({
+      portfolioValue: pv,
+      costBasis: basis,
+      allowanceRemaining: allowRem,
+      allowanceEnabled,
+      effectiveTaxRate,
+      taxEnabled,
+      targetNetNominal,
+    });
+
+    if (!grossResult.ok) {
+      break;
+    }
+
+    grossSum += grossResult.gross;
+    taxSum += grossResult.tax;
+    counted += 1;
+
+    pv -= grossResult.gross;
+    basis = Math.max(0, basis - grossResult.principalPart);
+    allowRem = Math.max(0, allowRem - grossResult.gainCoveredByAllowance);
+
+    cpi *= 1 + monthlyInflation;
+    if (!Number.isFinite(cpi) || cpi <= 0) {
+      break;
+    }
+  }
+
+  if (counted === 0) {
+    return { avgGrossNominal: 0, avgTaxNominal: 0, monthsCounted: 0 };
+  }
+
+  return {
+    avgGrossNominal: grossSum / counted,
+    avgTaxNominal: taxSum / counted,
+    monthsCounted: counted,
+  };
 };
 
 const computeResults = (params) => {
@@ -298,31 +735,69 @@ const computeResults = (params) => {
     }
   }
 
-  const inflationFactorEnd = Math.pow(1 + iMonthly, durationMonths);
+  const monthsSimulated = years.length;
+  const inflationFactorEnd = Math.pow(1 + iMonthly, monthsSimulated);
   const endCapitalNominal = balance;
   const endCapitalReal = balance / inflationFactorEnd;
 
-  const rReal = (1 + rWithdrawal) / (1 + iMonthly) - 1;
-  let payoutReal = 0;
+  // Retirement payout is NET after tax, constant in REAL terms (inflation-adjusted).
+  // We interpret "real" here as purchasing power at retirement start; we convert to today's money via inflationFactorEnd.
+  const basisAtRetirementStart = Math.max(0, params.startCapital + payNom);
+  const basisRealToday = basisAtRetirementStart / inflationFactorEnd;
+  const capitalGainsNominal = endCapitalNominal - basisAtRetirementStart;
+  const capitalGainsReal = endCapitalReal - basisRealToday;
 
-  if (params.payoutMode === "perpetual") {
-    payoutReal = rReal > 0 ? endCapitalReal * rReal : 0;
-    if (rReal <= 0) {
-      warnings.push("Perpetual payout is zero because real return is non-positive.");
-    }
+  const retirementMonths = params.payoutMode === "fixed" ? (params.payoutYears ?? 1) * 12 : 200 * 12;
+  const rReal = (1 + rWithdrawal) / (1 + iMonthly) - 1;
+  let payoutNetRealAtRetirementStart = 0;
+
+  if (params.payoutMode === "perpetual" && rReal <= 0) {
+    payoutNetRealAtRetirementStart = 0;
+    warnings.push("Perpetual net payout is zero because real return is non-positive.");
   } else {
-    const n = (params.payoutYears ?? 1) * 12;
-    if (Math.abs(rReal) < 1e-12) {
-      payoutReal = endCapitalReal / n;
+    if (params.payoutMode === "fixed") {
+      payoutNetRealAtRetirementStart = solveNetPayoutFixed({
+        months: retirementMonths,
+        portfolioValue0: endCapitalNominal,
+        costBasis0: basisAtRetirementStart,
+        monthlyReturnNominal: rWithdrawal,
+        monthlyInflation: iMonthly,
+        tax: params.tax,
+      });
     } else {
-      payoutReal = endCapitalReal * rReal / (1 - Math.pow(1 + rReal, -n));
+      payoutNetRealAtRetirementStart = solveNetPayoutPerpetual({
+        months: retirementMonths,
+        portfolioValue0: endCapitalNominal,
+        costBasis0: basisAtRetirementStart,
+        monthlyReturnNominal: rWithdrawal,
+        monthlyInflation: iMonthly,
+        tax: params.tax,
+        eps: 0.005,
+      });
     }
   }
 
-  const payoutNominal = payoutReal * inflationFactorEnd;
+  const payoutNominalNetAtRetirementStart = payoutNetRealAtRetirementStart;
+  const payoutRealNetToday = payoutNetRealAtRetirementStart / inflationFactorEnd;
 
-  if (!Number.isFinite(payoutReal) || !Number.isFinite(payoutNominal)) {
-    payoutReal = 0;
+  const yearOne = computeYearOneAverages({
+    netRealAtRetirementStart: payoutNetRealAtRetirementStart,
+    portfolioValue0: endCapitalNominal,
+    costBasis0: basisAtRetirementStart,
+    monthlyReturnNominal: rWithdrawal,
+    monthlyInflation: iMonthly,
+    tax: params.tax,
+  });
+
+  const grossWithdrawalNominalAvgYear1 = yearOne.avgGrossNominal;
+  const taxPaidNominalAvgYear1 = yearOne.avgTaxNominal;
+
+  if (yearOne.monthsCounted < 12 && payoutNetRealAtRetirementStart > 0) {
+    warnings.push("Year-1 average KPI is partial because the simulation depleted early.");
+  }
+
+  if (!Number.isFinite(payoutNominalNetAtRetirementStart) || !Number.isFinite(payoutRealNetToday)) {
+    payoutNetRealAtRetirementStart = 0;
     warnings.push("Payout calculation overflow. Values are set to zero.");
   }
 
@@ -338,8 +813,12 @@ const computeResults = (params) => {
       summary: {
         endCapitalNominal,
         endCapitalReal,
-        payoutMonthlyNominalAtRetirementStart: payoutNominal,
-        payoutMonthlyRealToday: payoutReal,
+        capitalGainsNominal,
+        capitalGainsReal,
+        payoutMonthlyNominalAtRetirementStart: payoutNominalNetAtRetirementStart,
+        payoutMonthlyRealToday: payoutRealNetToday,
+        grossWithdrawalNominalAvgYear1,
+        taxPaidNominalAvgYear1,
       },
     },
     warnings,
@@ -829,6 +1308,15 @@ const initialize = () => {
   elements.payoutYears.addEventListener("input", handleInputChange);
   elements.startSavings.addEventListener("input", updateStartSavings);
   elements.saveScenario.addEventListener("click", saveScenario);
+
+  elements.taxEnabled?.addEventListener("change", handleInputChange);
+  elements.taxApplyAllowance?.addEventListener("change", handleInputChange);
+  elements.taxIncludeSoli?.addEventListener("change", handleInputChange);
+  elements.taxIncludeChurch?.addEventListener("change", handleInputChange);
+  elements.taxKestRate?.addEventListener("input", handleInputChange);
+  elements.taxSoliRate?.addEventListener("input", handleInputChange);
+  elements.taxChurchRate?.addEventListener("input", handleInputChange);
+  elements.taxAllowanceAnnual?.addEventListener("input", handleInputChange);
 };
 
 initialize();
