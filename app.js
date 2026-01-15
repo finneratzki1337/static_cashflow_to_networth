@@ -1,5 +1,6 @@
 const STORAGE_KEY = "arcade_pension_scenarios_v2";
 const Y_STEP = 25;
+const DEFAULT_SEGMENT_MODE = "step";
 
 const ChartJS = window.Chart;
 const ChartDragDataPlugin =
@@ -171,12 +172,17 @@ const normalizeBreakpoints = (points, durationYears) => {
     if (!deduped.has(year)) {
       deduped.set(year, {
         year,
-        monthlyRate: Math.max(0, point.monthlyRate),
+        monthlyRate: Math.max(0, toNumber(point.monthlyRate, 0)),
+        modeAfter: point?.modeAfter === "linear" ? "linear" : DEFAULT_SEGMENT_MODE,
       });
     }
   });
   if (!deduped.has(0)) {
-    deduped.set(0, { year: 0, monthlyRate: defaultParams.breakpoints[0].monthlyRate });
+    deduped.set(0, {
+      year: 0,
+      monthlyRate: defaultParams.breakpoints[0].monthlyRate,
+      modeAfter: DEFAULT_SEGMENT_MODE,
+    });
   }
   return Array.from(deduped.values()).sort((a, b) => a.year - b.year);
 };
@@ -193,13 +199,36 @@ const roundToStep = (value, step) => {
 
 const monthlyRateAtYear = (points, year) => {
   const sorted = [...points].sort((a, b) => a.year - b.year);
-  let current = sorted[0];
-  sorted.forEach((point) => {
-    if (point.year <= year) {
-      current = point;
+  if (!sorted.length) {
+    return 0;
+  }
+
+  let index = 0;
+  for (let i = 0; i < sorted.length; i += 1) {
+    if (sorted[i].year <= year) {
+      index = i;
     }
-  });
-  return current?.monthlyRate ?? 0;
+  }
+
+  const current = sorted[index];
+  const next = sorted[index + 1];
+  const modeAfter = current?.modeAfter === "linear" ? "linear" : DEFAULT_SEGMENT_MODE;
+
+  if (modeAfter !== "linear" || !next) {
+    return current?.monthlyRate ?? 0;
+  }
+
+  const span = next.year - current.year;
+  if (!Number.isFinite(span) || span <= 0) {
+    return current?.monthlyRate ?? 0;
+  }
+
+  // Interpolate only within the segment [current.year, next.year).
+  // For year values >= next.year, the loop above will already have advanced index.
+  const t = clamp((year - current.year) / span, 0, 1);
+  const a = toNumber(current.monthlyRate, 0);
+  const b = toNumber(next.monthlyRate, 0);
+  return a + (b - a) * t;
 };
 
 const buildParamsFromInputs = () => {
@@ -828,16 +857,21 @@ const computeResults = (params) => {
 let scheduleChart = null;
 let scenarioChart = null;
 
+let scheduleUiState = {
+  isMenuOpen: false,
+  activeBreakpointIndex: null,
+};
+
 let scheduleRenderMeta = {
   draggableByDataIndex: new Map(),
   breakpointByDataIndex: new Map(),
 };
 
 const buildScheduleRenderData = (points, durationYears) => {
-  // Build an explicit staircase: at each breakpoint year, draw a vertical jump,
-  // then a horizontal segment that applies to the RIGHT of the breakpoint.
-  // We do this by adding a non-draggable "join" point at (year, prevRate)
-  // followed by a draggable "level" point at (year, rate).
+  // Render schedule as a polyline with mixed segment styles.
+  // - STEP segments are encoded by inserting a non-draggable connector at (nextYear, prevRate)
+  //   and then the draggable level point at (nextYear, nextRate) to create the vertical jump.
+  // - LINEAR segments are encoded by directly connecting the level points.
 
   const meta = {
     draggableByDataIndex: new Map(),
@@ -847,7 +881,7 @@ const buildScheduleRenderData = (points, durationYears) => {
   const data = [];
   const sorted = normalizeBreakpoints(points, durationYears);
   if (!sorted.length) {
-    sorted.push({ year: 0, monthlyRate: 0 });
+    sorted.push({ year: 0, monthlyRate: 0, modeAfter: DEFAULT_SEGMENT_MODE });
   }
 
   // Start point
@@ -859,10 +893,13 @@ const buildScheduleRenderData = (points, durationYears) => {
     const year = sorted[i].year;
     const prevRate = sorted[i - 1].monthlyRate;
     const rate = sorted[i].monthlyRate;
+    const prevMode = sorted[i - 1]?.modeAfter === "linear" ? "linear" : DEFAULT_SEGMENT_MODE;
 
-    // Connector (non-draggable)
-    data.push({ x: year, y: prevRate });
-    meta.draggableByDataIndex.set(data.length - 1, false);
+    if (prevMode !== "linear") {
+      // Connector (non-draggable)
+      data.push({ x: year, y: prevRate });
+      meta.draggableByDataIndex.set(data.length - 1, false);
+    }
 
     // Level (draggable)
     data.push({ x: year, y: rate });
@@ -878,6 +915,246 @@ const buildScheduleRenderData = (points, durationYears) => {
   }
 
   return { data, meta, normalizedBreakpoints: sorted };
+};
+
+const getOrCreateScheduleContextMenu = () => {
+  let el = document.getElementById("schedule-context-menu");
+  if (el) {
+    return el;
+  }
+  el = document.createElement("div");
+  el.id = "schedule-context-menu";
+  el.className = "schedule-context";
+  el.style.display = "none";
+  document.body.appendChild(el);
+  return el;
+};
+
+const getOrCreateScheduleValueEditor = () => {
+  let el = document.getElementById("schedule-value-editor");
+  if (el) {
+    return el;
+  }
+  el = document.createElement("div");
+  el.id = "schedule-value-editor";
+  el.className = "schedule-editor";
+  el.style.display = "none";
+  document.body.appendChild(el);
+  return el;
+};
+
+const clampToViewport = (x, y, el, pad = 10) => {
+  const maxX = window.innerWidth - el.offsetWidth - pad;
+  const maxY = window.innerHeight - el.offsetHeight - pad;
+  return {
+    x: clamp(x, pad, Math.max(pad, maxX)),
+    y: clamp(y, pad, Math.max(pad, maxY)),
+  };
+};
+
+const findScheduleDataIndexForBreakpoint = (bpIndex) => {
+  for (const [dataIndex, mappedBpIndex] of scheduleRenderMeta.breakpointByDataIndex.entries()) {
+    if (mappedBpIndex === bpIndex) {
+      return dataIndex;
+    }
+  }
+  return null;
+};
+
+const getSchedulePointPagePosition = (dataIndex) => {
+  if (!scheduleChart) {
+    return null;
+  }
+  const meta = scheduleChart.getDatasetMeta(0);
+  const el = meta?.data?.[dataIndex];
+  if (!el) {
+    return null;
+  }
+  const rect = scheduleChart.canvas.getBoundingClientRect();
+  return {
+    x: rect.left + el.x,
+    y: rect.top + el.y,
+  };
+};
+
+const hideScheduleOverlays = () => {
+  const menu = getOrCreateScheduleContextMenu();
+  const editor = getOrCreateScheduleValueEditor();
+  menu.style.display = "none";
+  editor.style.display = "none";
+  scheduleUiState.isMenuOpen = false;
+  scheduleUiState.activeBreakpointIndex = null;
+};
+
+const openScheduleValueEditor = ({ bpIndex }) => {
+  const editor = getOrCreateScheduleValueEditor();
+  const dataIndex = findScheduleDataIndexForBreakpoint(bpIndex);
+  if (dataIndex === null) {
+    return;
+  }
+
+  const pos = getSchedulePointPagePosition(dataIndex);
+  if (!pos) {
+    return;
+  }
+
+  const current = breakpoints[bpIndex];
+  const currentValue = toNumber(current?.monthlyRate, 0);
+
+  editor.innerHTML = `
+    <div class="schedule-editor__title">SET POINT TO</div>
+    <div class="schedule-editor__row">
+      <input id="schedule-editor-input" type="number" min="0" step="${Y_STEP}" value="${currentValue}" />
+      <button type="button" id="schedule-editor-apply">OK</button>
+      <button type="button" id="schedule-editor-cancel">X</button>
+    </div>
+  `.trim();
+
+  editor.style.display = "block";
+  // Position slightly to the right of the dot.
+  const desired = clampToViewport(pos.x + 12, pos.y - 12, editor);
+  editor.style.left = `${desired.x}px`;
+  editor.style.top = `${desired.y}px`;
+
+  const input = editor.querySelector("#schedule-editor-input");
+  const applyBtn = editor.querySelector("#schedule-editor-apply");
+  const cancelBtn = editor.querySelector("#schedule-editor-cancel");
+
+  const apply = () => {
+    const raw = toNumber(input?.value, currentValue);
+    const snapped = Math.max(0, roundToStep(raw, Y_STEP));
+    breakpoints[bpIndex].monthlyRate = snapped;
+    if (bpIndex === 0) {
+      elements.startSavings.value = snapped;
+    }
+    editor.style.display = "none";
+    renderScheduleChart();
+    schedulePreviewRender();
+  };
+
+  const cancel = () => {
+    editor.style.display = "none";
+  };
+
+  applyBtn?.addEventListener("click", apply);
+  cancelBtn?.addEventListener("click", cancel);
+  input?.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      apply();
+    }
+    if (ev.key === "Escape") {
+      ev.preventDefault();
+      cancel();
+    }
+  });
+
+  // Focus/select for quick knob-like entry.
+  if (input) {
+    input.focus();
+    input.select();
+  }
+};
+
+const openScheduleContextMenu = ({ bpIndex }) => {
+  const menu = getOrCreateScheduleContextMenu();
+  const dataIndex = findScheduleDataIndexForBreakpoint(bpIndex);
+  if (dataIndex === null) {
+    return;
+  }
+
+  const pos = getSchedulePointPagePosition(dataIndex);
+  if (!pos) {
+    return;
+  }
+
+  const bp = breakpoints[bpIndex];
+  const isFirst = bpIndex === 0;
+  const isLast = bpIndex === breakpoints.length - 1;
+  const canDelete = bp?.year !== 0;
+  const canToggleBefore = !isFirst;
+  const canToggleAfter = !isLast;
+
+  const linearBefore = canToggleBefore
+    ? (breakpoints[bpIndex - 1]?.modeAfter === "linear")
+    : false;
+  const linearAfter = canToggleAfter ? (bp?.modeAfter === "linear") : false;
+
+  const beforeLabel = linearBefore ? "STEP PATH BEFORE" : "LINEAR PATH BEFORE";
+  const afterLabel = linearAfter ? "STEP PATH AFTER" : "LINEAR PATH AFTER";
+
+  menu.innerHTML = `
+    <div class="schedule-context__title">POINT ${bp?.year ?? 0}Y</div>
+    <button type="button" class="schedule-context__item" data-action="set">SET POINT TO…</button>
+    <button type="button" class="schedule-context__item" data-action="before" ${
+      canToggleBefore ? "" : "disabled"
+    }>${beforeLabel}</button>
+    <button type="button" class="schedule-context__item" data-action="after" ${
+      canToggleAfter ? "" : "disabled"
+    }>${afterLabel}</button>
+    <div class="schedule-context__sep"></div>
+    <button type="button" class="schedule-context__item schedule-context__item--danger" data-action="delete" ${
+      canDelete ? "" : "disabled"
+    }>DELETE POINT</button>
+  `.trim();
+
+  menu.style.display = "block";
+  const desired = clampToViewport(pos.x + 12, pos.y + 12, menu);
+  menu.style.left = `${desired.x}px`;
+  menu.style.top = `${desired.y}px`;
+
+  scheduleUiState.isMenuOpen = true;
+  scheduleUiState.activeBreakpointIndex = bpIndex;
+
+  const onClick = (ev) => {
+    const target = ev.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    const action = target.dataset.action;
+    if (!action || target.hasAttribute("disabled")) {
+      return;
+    }
+
+    if (action === "set") {
+      openScheduleValueEditor({ bpIndex });
+      return;
+    }
+
+    if (action === "before" && bpIndex > 0) {
+      const prev = breakpoints[bpIndex - 1];
+      prev.modeAfter = prev.modeAfter === "linear" ? DEFAULT_SEGMENT_MODE : "linear";
+      renderScheduleChart();
+      schedulePreviewRender();
+      openScheduleContextMenu({ bpIndex });
+      return;
+    }
+
+    if (action === "after" && bpIndex < breakpoints.length - 1) {
+      const cur = breakpoints[bpIndex];
+      cur.modeAfter = cur.modeAfter === "linear" ? DEFAULT_SEGMENT_MODE : "linear";
+      renderScheduleChart();
+      schedulePreviewRender();
+      openScheduleContextMenu({ bpIndex });
+      return;
+    }
+
+    if (action === "delete") {
+      if (breakpoints[bpIndex]?.year === 0) {
+        return;
+      }
+      breakpoints.splice(bpIndex, 1);
+      hideScheduleOverlays();
+      renderScheduleChart();
+      schedulePreviewRender();
+    }
+  };
+
+  // Replace any previous click handler by cloning (simple + safe).
+  const fresh = menu.cloneNode(true);
+  menu.parentNode.replaceChild(fresh, menu);
+  const newMenu = getOrCreateScheduleContextMenu();
+  newMenu.addEventListener("click", onClick);
 };
 
 const buildScheduleChart = () => {
@@ -900,7 +1177,7 @@ const buildScheduleChart = () => {
           backgroundColor: "#2ef2a6",
           pointRadius: (context) => (scheduleRenderMeta.draggableByDataIndex.get(context.dataIndex) ? 5 : 0),
           pointHoverRadius: (context) => (scheduleRenderMeta.draggableByDataIndex.get(context.dataIndex) ? 7 : 0),
-          stepped: "after",
+          stepped: false,
           dragData: true,
           dragX: false,
           dragDataRound: Y_STEP,
@@ -960,6 +1237,9 @@ const buildScheduleChart = () => {
 
   const canvas = scheduleChart.canvas;
   canvas.addEventListener("click", (event) => {
+    if (scheduleUiState.isMenuOpen) {
+      hideScheduleOverlays();
+    }
     const chartArea = scheduleChart.chartArea;
     if (
       event.offsetX < chartArea.left ||
@@ -979,14 +1259,46 @@ const buildScheduleChart = () => {
 
     const monthlyRate = monthlyRateAtYear(breakpoints, year);
     breakpoints = normalizeBreakpoints(
-      [...breakpoints, { year, monthlyRate }],
+      [...breakpoints, { year, monthlyRate, modeAfter: DEFAULT_SEGMENT_MODE }],
       buildParamsFromInputs().durationYears
     );
     renderScheduleChart();
     schedulePreviewRender();
   });
 
+  canvas.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    const points = scheduleChart.getElementsAtEventForMode(
+      event,
+      "nearest",
+      { intersect: true },
+      true
+    );
+
+    if (!points.length) {
+      hideScheduleOverlays();
+      return;
+    }
+
+    const index = points[0].index;
+    if (scheduleRenderMeta.draggableByDataIndex.get(index) !== true) {
+      hideScheduleOverlays();
+      return;
+    }
+
+    const bpIndex = scheduleRenderMeta.breakpointByDataIndex.get(index);
+    if (bpIndex === undefined) {
+      hideScheduleOverlays();
+      return;
+    }
+
+    openScheduleContextMenu({ bpIndex });
+  });
+
   canvas.addEventListener("dblclick", (event) => {
+    if (scheduleUiState.isMenuOpen) {
+      hideScheduleOverlays();
+    }
     const points = scheduleChart.getElementsAtEventForMode(
       event,
       "nearest",
@@ -1031,6 +1343,16 @@ const renderScheduleChart = () => {
   scheduleRenderMeta = render.meta;
   scheduleChart.data.datasets[0].data = render.data;
   scheduleChart.update();
+
+  // Keep any open menu/editor anchored to the same breakpoint.
+  if (scheduleUiState.isMenuOpen && scheduleUiState.activeBreakpointIndex !== null) {
+    const bpIndex = scheduleUiState.activeBreakpointIndex;
+    if (bpIndex < 0 || bpIndex >= breakpoints.length) {
+      hideScheduleOverlays();
+    } else {
+      openScheduleContextMenu({ bpIndex });
+    }
+  }
 };
 
 const buildScenarioChart = () => {
@@ -1288,6 +1610,34 @@ const initialize = () => {
   buildScheduleChart();
   buildScenarioChart();
   renderScheduleChart();
+
+  document.addEventListener("mousedown", (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+    const menu = document.getElementById("schedule-context-menu");
+    const editor = document.getElementById("schedule-value-editor");
+    const target = event.target;
+    if (menu && menu.style.display === "block" && menu.contains(target)) {
+      return;
+    }
+    if (editor && editor.style.display === "block" && editor.contains(target)) {
+      return;
+    }
+    if ((menu && menu.style.display === "block") || (editor && editor.style.display === "block")) {
+      hideScheduleOverlays();
+    }
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      const menu = document.getElementById("schedule-context-menu");
+      const editor = document.getElementById("schedule-value-editor");
+      if ((menu && menu.style.display === "block") || (editor && editor.style.display === "block")) {
+        hideScheduleOverlays();
+      }
+    }
+  });
 
   // Live preview for current working inputs (even before saving scenarios).
   schedulePreviewRender();
