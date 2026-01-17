@@ -318,6 +318,8 @@ const togglePayoutYears = () => {
 
 let previewRaf = null;
 
+let transientWarnings = [];
+
 const updateScenarioChartFromResults = (results) => {
   if (!scenarioChart) {
     return;
@@ -371,7 +373,9 @@ const updateKpisFromResults = (results) => {
 const computeAndRenderPreview = () => {
   const params = buildParamsFromInputs();
   const { results, warnings } = computeResults(params);
-  setWarnings(warnings);
+  const mergedWarnings = [...warnings, ...transientWarnings];
+  transientWarnings = [];
+  setWarnings(mergedWarnings);
   updateScenarioChartFromResults(results);
   updateKpisFromResults(results);
 };
@@ -842,6 +846,7 @@ const computeResults = (params) => {
       summary: {
         endCapitalNominal,
         endCapitalReal,
+        inflationFactorAtRetirementStart: inflationFactorEnd,
         capitalGainsNominal,
         capitalGainsReal,
         payoutMonthlyNominalAtRetirementStart: payoutNominalNetAtRetirementStart,
@@ -986,7 +991,7 @@ const hideScheduleOverlays = () => {
   scheduleUiState.activeBreakpointIndex = null;
 };
 
-const openScheduleValueEditor = ({ bpIndex }) => {
+const openScheduleNumberEditor = ({ bpIndex, title, value, min = 0, step = 1, onApply }) => {
   const editor = getOrCreateScheduleValueEditor();
   const dataIndex = findScheduleDataIndexForBreakpoint(bpIndex);
   if (dataIndex === null) {
@@ -998,20 +1003,18 @@ const openScheduleValueEditor = ({ bpIndex }) => {
     return;
   }
 
-  const current = breakpoints[bpIndex];
-  const currentValue = toNumber(current?.monthlyRate, 0);
+  const initial = toNumber(value, 0);
 
   editor.innerHTML = `
-    <div class="schedule-editor__title">SET POINT TO</div>
+    <div class="schedule-editor__title">${title}</div>
     <div class="schedule-editor__row">
-      <input id="schedule-editor-input" type="number" min="0" step="${Y_STEP}" value="${currentValue}" />
+      <input id="schedule-editor-input" type="number" min="${min}" step="${step}" value="${initial}" />
       <button type="button" id="schedule-editor-apply">OK</button>
       <button type="button" id="schedule-editor-cancel">X</button>
     </div>
   `.trim();
 
   editor.style.display = "block";
-  // Position slightly to the right of the dot.
   const desired = clampToViewport(pos.x + 12, pos.y - 12, editor);
   editor.style.left = `${desired.x}px`;
   editor.style.top = `${desired.y}px`;
@@ -1021,15 +1024,9 @@ const openScheduleValueEditor = ({ bpIndex }) => {
   const cancelBtn = editor.querySelector("#schedule-editor-cancel");
 
   const apply = () => {
-    const raw = toNumber(input?.value, currentValue);
-    const snapped = Math.max(0, roundToStep(raw, Y_STEP));
-    breakpoints[bpIndex].monthlyRate = snapped;
-    if (bpIndex === 0) {
-      elements.startSavings.value = snapped;
-    }
+    const raw = toNumber(input?.value, initial);
     editor.style.display = "none";
-    renderScheduleChart();
-    schedulePreviewRender();
+    onApply?.(raw);
   };
 
   const cancel = () => {
@@ -1049,11 +1046,198 @@ const openScheduleValueEditor = ({ bpIndex }) => {
     }
   });
 
-  // Focus/select for quick knob-like entry.
   if (input) {
     input.focus();
     input.select();
   }
+};
+
+const openScheduleValueEditor = ({ bpIndex }) => {
+  const current = breakpoints[bpIndex];
+  const currentValue = toNumber(current?.monthlyRate, 0);
+
+  openScheduleNumberEditor({
+    bpIndex,
+    title: "SET POINT TO",
+    value: currentValue,
+    min: 0,
+    step: Y_STEP,
+    onApply: (raw) => {
+    const snapped = Math.max(0, roundToStep(raw, Y_STEP));
+    breakpoints[bpIndex].monthlyRate = snapped;
+    if (bpIndex === 0) {
+      elements.startSavings.value = snapped;
+    }
+    renderScheduleChart();
+    schedulePreviewRender();
+    },
+  });
+};
+
+const getTargetKpiDefinitions = () => {
+  return {
+    endNominal: {
+      label: "NOMINAL END VALUE",
+      getValue: (summary) => toNumber(summary?.endCapitalNominal, 0),
+    },
+    endReal: {
+      label: "REAL END VALUE",
+      getValue: (summary) => toNumber(summary?.endCapitalReal, 0),
+    },
+    netPayoutNominal: {
+      // In doubt, use YEAR 1 average nominal values.
+      label: "NOMINAL NET PAYOUT",
+      getValue: (summary) => {
+        const gross = toNumber(summary?.grossWithdrawalNominalAvgYear1, 0);
+        const tax = toNumber(summary?.taxPaidNominalAvgYear1, 0);
+        return Math.max(0, gross - tax);
+      },
+    },
+    netPayoutReal: {
+      // Convert YEAR 1 nominal net payout into today's money using the retirement-start inflation factor.
+      label: "REAL NET PAYOUT",
+      getValue: (summary) => {
+        const gross = toNumber(summary?.grossWithdrawalNominalAvgYear1, 0);
+        const tax = toNumber(summary?.taxPaidNominalAvgYear1, 0);
+        const netNom = Math.max(0, gross - tax);
+        const infl = toNumber(summary?.inflationFactorAtRetirementStart, 1);
+        if (!Number.isFinite(infl) || infl <= 0) {
+          return netNom;
+        }
+        return netNom / infl;
+      },
+    },
+  };
+};
+
+const solveBreakpointMonthlyRateForTarget = ({ bpIndex, kpiKey, target }) => {
+  const defs = getTargetKpiDefinitions();
+  const def = defs[kpiKey];
+  if (!def) {
+    return { ok: false, reason: "unknown-kpi" };
+  }
+
+  const baseParams = buildParamsFromInputs();
+  const durationYears = baseParams.durationYears;
+  const basePoints = normalizeBreakpoints(breakpoints, durationYears).map((bp) => ({ ...bp }));
+  if (bpIndex < 0 || bpIndex >= basePoints.length) {
+    return { ok: false, reason: "bad-index" };
+  }
+
+  const kpiAt = (monthlyRate) => {
+    const pts = basePoints.map((bp, idx) =>
+      idx === bpIndex ? { ...bp, monthlyRate } : { ...bp }
+    );
+    const { results } = computeResults({ ...baseParams, breakpoints: pts });
+    const val = def.getValue(results?.summary);
+    return Number.isFinite(val) ? val : null;
+  };
+
+  const targetValue = Math.max(0, toNumber(target, 0));
+  const currentRate = Math.max(0, toNumber(basePoints[bpIndex]?.monthlyRate, 0));
+
+  const MAX_RATE = 1_000_000;
+  const lowRate = 0;
+  const lowVal = kpiAt(lowRate);
+  if (lowVal === null) {
+    return { ok: false, reason: "kpi-eval-failed" };
+  }
+
+  if (targetValue <= lowVal) {
+    return { ok: true, monthlyRate: 0, warning: "TARGET BELOW MINIMUM; SET TO 0." };
+  }
+
+  let highRate = Math.max(Y_STEP, currentRate || Y_STEP);
+  highRate = Math.min(highRate, MAX_RATE);
+  let highVal = kpiAt(highRate);
+
+  // Expand bracket until we cross the target (assuming KPI increases with higher monthlyRate).
+  let expansions = 0;
+  while (highVal !== null && highVal < targetValue && highRate < MAX_RATE && expansions < 50) {
+    highRate = Math.min(MAX_RATE, Math.max(highRate + Y_STEP, highRate * 1.6));
+    highVal = kpiAt(highRate);
+    expansions += 1;
+  }
+
+  if (highVal === null) {
+    return { ok: false, reason: "kpi-eval-failed" };
+  }
+
+  if (highVal < targetValue) {
+    return { ok: true, monthlyRate: highRate, warning: "TARGET NOT REACHED; CLAMPED TO MAX." };
+  }
+
+  let lo = lowRate;
+  let hi = highRate;
+  let bestRate = hi;
+  let bestErr = Math.abs(highVal - targetValue);
+  const tol = Math.max(1, targetValue * 0.0005);
+
+  for (let iter = 0; iter < 60; iter += 1) {
+    const mid = (lo + hi) / 2;
+    const val = kpiAt(mid);
+    if (val === null) {
+      break;
+    }
+
+    const err = Math.abs(val - targetValue);
+    if (err < bestErr) {
+      bestErr = err;
+      bestRate = mid;
+    }
+
+    if (err <= tol) {
+      bestRate = mid;
+      break;
+    }
+
+    if (val < targetValue) {
+      lo = mid;
+    } else {
+      hi = mid;
+    }
+  }
+
+  return { ok: true, monthlyRate: bestRate };
+};
+
+const openScheduleTargetValueEditor = ({ bpIndex, kpiKey }) => {
+  const defs = getTargetKpiDefinitions();
+  const def = defs[kpiKey];
+  if (!def) {
+    return;
+  }
+
+  const params = buildParamsFromInputs();
+  const { results } = computeResults(params);
+  const currentKpi = def.getValue(results?.summary);
+
+  openScheduleNumberEditor({
+    bpIndex,
+    title: `TARGET: ${def.label}`,
+    value: Math.max(0, Math.round(toNumber(currentKpi, 0))),
+    min: 0,
+    step: 100,
+    onApply: (rawTarget) => {
+      const res = solveBreakpointMonthlyRateForTarget({ bpIndex, kpiKey, target: rawTarget });
+      if (!res.ok) {
+        transientWarnings = ["TARGET SOLVER FAILED."];
+        schedulePreviewRender();
+        return;
+      }
+
+      const snapped = Math.max(0, roundToStep(res.monthlyRate, Y_STEP));
+      breakpoints[bpIndex].monthlyRate = snapped;
+      if (bpIndex === 0) {
+        elements.startSavings.value = snapped;
+      }
+
+      transientWarnings = res.warning ? [res.warning] : [];
+      hideScheduleOverlays();
+      renderScheduleChart();
+      schedulePreviewRender();
+    },
+  });
 };
 
 const openScheduleContextMenu = ({ bpIndex }) => {
@@ -1086,6 +1270,15 @@ const openScheduleContextMenu = ({ bpIndex }) => {
   menu.innerHTML = `
     <div class="schedule-context__title">POINT ${bp?.year ?? 0}Y</div>
     <button type="button" class="schedule-context__item" data-action="set">SET POINT TO…</button>
+    <div class="schedule-context__submenu">
+      <button type="button" class="schedule-context__item schedule-context__item--submenu" data-action="target">SET TO TARGET VALUE ▸</button>
+      <div class="schedule-context__submenu-panel">
+        <button type="button" class="schedule-context__item" data-action="target-kpi" data-kpi="endNominal">NOMINAL END VALUE…</button>
+        <button type="button" class="schedule-context__item" data-action="target-kpi" data-kpi="endReal">REAL END VALUE…</button>
+        <button type="button" class="schedule-context__item" data-action="target-kpi" data-kpi="netPayoutNominal">NOMINAL NET PAYOUT…</button>
+        <button type="button" class="schedule-context__item" data-action="target-kpi" data-kpi="netPayoutReal">REAL NET PAYOUT…</button>
+      </div>
+    </div>
     <button type="button" class="schedule-context__item" data-action="before" ${
       canToggleBefore ? "" : "disabled"
     }>${beforeLabel}</button>
@@ -1118,6 +1311,14 @@ const openScheduleContextMenu = ({ bpIndex }) => {
 
     if (action === "set") {
       openScheduleValueEditor({ bpIndex });
+      return;
+    }
+
+    if (action === "target-kpi") {
+      const kpiKey = target.dataset.kpi;
+      if (typeof kpiKey === "string" && kpiKey.length) {
+        openScheduleTargetValueEditor({ bpIndex, kpiKey });
+      }
       return;
     }
 
