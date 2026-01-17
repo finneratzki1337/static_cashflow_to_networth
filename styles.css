@@ -392,6 +392,25 @@ body {
   border-color: var(--accent-muted);
 }
 
+.schedule-context__submenu {
+  position: relative;
+}
+
+.schedule-context__submenu-panel {
+  position: absolute;
+  top: 0;
+  left: calc(100% + 10px);
+  min-width: 240px;
+  border: 2px solid var(--accent);
+  background: rgba(17, 25, 35, 0.96);
+  padding: 10px 12px;
+  display: none;
+}
+
+.schedule-context__submenu:hover .schedule-context__submenu-panel {
+  display: block;
+}
+
 .schedule-context__sep {
   height: 1px;
   background: var(--accent-muted);
