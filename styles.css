@@ -394,12 +394,15 @@ body {
 
 .schedule-context__submenu {
   position: relative;
+  /* Extend hover hit-area to the right so the submenu doesn't flicker */
+  padding-right: 14px;
 }
 
 .schedule-context__submenu-panel {
   position: absolute;
   top: 0;
-  left: calc(100% + 10px);
+  /* No dead gap between trigger and submenu: overlap border by 2px */
+  left: calc(100% - 2px);
   min-width: 240px;
   border: 2px solid var(--accent);
   background: rgba(17, 25, 35, 0.96);

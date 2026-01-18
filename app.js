@@ -1063,13 +1063,13 @@ const openScheduleValueEditor = ({ bpIndex }) => {
     min: 0,
     step: Y_STEP,
     onApply: (raw) => {
-    const snapped = Math.max(0, roundToStep(raw, Y_STEP));
-    breakpoints[bpIndex].monthlyRate = snapped;
-    if (bpIndex === 0) {
-      elements.startSavings.value = snapped;
-    }
-    renderScheduleChart();
-    schedulePreviewRender();
+      const snapped = Math.max(0, roundToStep(raw, Y_STEP));
+      breakpoints[bpIndex].monthlyRate = snapped;
+      if (bpIndex === 0) {
+        elements.startSavings.value = snapped;
+      }
+      renderScheduleChart();
+      schedulePreviewRender();
     },
   });
 };
@@ -1085,27 +1085,14 @@ const getTargetKpiDefinitions = () => {
       getValue: (summary) => toNumber(summary?.endCapitalReal, 0),
     },
     netPayoutNominal: {
-      // In doubt, use YEAR 1 average nominal values.
       label: "NOMINAL NET PAYOUT",
-      getValue: (summary) => {
-        const gross = toNumber(summary?.grossWithdrawalNominalAvgYear1, 0);
-        const tax = toNumber(summary?.taxPaidNominalAvgYear1, 0);
-        return Math.max(0, gross - tax);
-      },
+      // Match the KPI shown on the right panel.
+      getValue: (summary) => toNumber(summary?.payoutMonthlyNominalAtRetirementStart, 0),
     },
     netPayoutReal: {
-      // Convert YEAR 1 nominal net payout into today's money using the retirement-start inflation factor.
       label: "REAL NET PAYOUT",
-      getValue: (summary) => {
-        const gross = toNumber(summary?.grossWithdrawalNominalAvgYear1, 0);
-        const tax = toNumber(summary?.taxPaidNominalAvgYear1, 0);
-        const netNom = Math.max(0, gross - tax);
-        const infl = toNumber(summary?.inflationFactorAtRetirementStart, 1);
-        if (!Number.isFinite(infl) || infl <= 0) {
-          return netNom;
-        }
-        return netNom / infl;
-      },
+      // Match the KPI shown on the right panel.
+      getValue: (summary) => toNumber(summary?.payoutMonthlyRealToday, 0),
     },
   };
 };
@@ -1171,9 +1158,10 @@ const solveBreakpointMonthlyRateForTarget = ({ bpIndex, kpiKey, target }) => {
   let hi = highRate;
   let bestRate = hi;
   let bestErr = Math.abs(highVal - targetValue);
-  const tol = Math.max(1, targetValue * 0.0005);
+  // Target needs to land within < 0.5 EUR so the UI rounding matches the user's target.
+  const tol = 0.25;
 
-  for (let iter = 0; iter < 60; iter += 1) {
+  for (let iter = 0; iter < 90; iter += 1) {
     const mid = (lo + hi) / 2;
     const val = kpiAt(mid);
     if (val === null) {
@@ -1217,7 +1205,7 @@ const openScheduleTargetValueEditor = ({ bpIndex, kpiKey }) => {
     title: `TARGET: ${def.label}`,
     value: Math.max(0, Math.round(toNumber(currentKpi, 0))),
     min: 0,
-    step: 100,
+    step: 1,
     onApply: (rawTarget) => {
       const res = solveBreakpointMonthlyRateForTarget({ bpIndex, kpiKey, target: rawTarget });
       if (!res.ok) {
@@ -1226,10 +1214,11 @@ const openScheduleTargetValueEditor = ({ bpIndex, kpiKey }) => {
         return;
       }
 
-      const snapped = Math.max(0, roundToStep(res.monthlyRate, Y_STEP));
-      breakpoints[bpIndex].monthlyRate = snapped;
+      // Do NOT snap to Y_STEP here; solving needs sub-euro accuracy.
+      const precise = Math.max(0, Math.round(toNumber(res.monthlyRate, 0) * 100) / 100);
+      breakpoints[bpIndex].monthlyRate = precise;
       if (bpIndex === 0) {
-        elements.startSavings.value = snapped;
+        elements.startSavings.value = precise;
       }
 
       transientWarnings = res.warning ? [res.warning] : [];
